@@ -1,2 +1,2 @@
 # aula-live-backend-realtime
-Servicios WebSockets + WebRTC Proyecto AulaLive - Proyectio Integrador Univalle
+Servicios WebSockets + WebRTC Proyecto AulaLive - Proyecto Integrador Univalle
