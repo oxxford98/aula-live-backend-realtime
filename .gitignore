@@ -1,0 +1,45 @@
+db.sqlite3
+.env
+files/
+.idea/
+signature_user/
+logs/
+node_modules/
+dist/
+.env
+
+# Django cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# Django specific
+*.log
+local_settings.py
+/staticfiles/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# IDE
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# OnlyOffice
+onlyoffice/data
