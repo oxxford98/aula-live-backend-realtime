@@ -3,6 +3,7 @@ import http from "http";
 import { Server } from "socket.io";
 import admin, { db } from './config/firebase.js';
 import cors from "cors";
+import { resolve } from "node:path";
 
 
 type AuthPayload = { uid: string; name?: string | null; email?: string | null };
@@ -17,6 +18,21 @@ type Message = {
 
 const app = express();
 app.use(cors());
+app.use("/docs", express.static(resolve(process.cwd(), "public/docs")));
+
+app.get("/docs", (req, res) => {
+  const host = req.get("x-forwarded-host") || req.get("host") || "localhost:4000";
+  const rawProtocol = req.get("x-forwarded-proto") || req.protocol || "http";
+  const protocol = rawProtocol.split(",")[0]?.trim() || "http";
+  const specUrl = `${protocol}://${host}/docs/asyncapi.yaml`;
+  const studioUrl = `https://studio.asyncapi.com/?url=${encodeURIComponent(specUrl)}`;
+  res.redirect(studioUrl);
+});
+
+app.get("/health", (_req, res) => {
+  res.status(200).json({ ok: true, service: "aula-live-backend-realtime" });
+});
+
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
@@ -59,6 +75,14 @@ io.on("connection", (socket) => {
         const createdAt = ts?.toDate ? ts.toDate().toISOString() : null;
         return { id: d.id, text: String(data.text || ""), userUid: String(data.userUid || ""), displayName: data.displayName || null, createdAt };
       }).reverse();
+
+      console.info("[room_joined]", {
+        roomId,
+        uid: auth.uid,
+        user: auth.name || auth.email || null,
+        socketId: socket.id,
+        at: new Date().toISOString(),
+      });
 
       if (ack) ack({ ok: true, messages });
     } catch (e) {
