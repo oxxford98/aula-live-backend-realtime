@@ -1,0 +1,223 @@
+asyncapi: 3.0.0
+info:
+  title: AulaLive Realtime API
+  version: 1.0.0
+  description: |
+    Contrato de eventos Socket.IO para el servicio realtime de AulaLive.
+
+    Flujo base:
+    1. Cliente se conecta enviando token Firebase en handshake.auth.token.
+    2. Cliente emite join_room para unirse y recibir historial.
+    3. Cliente emite message para enviar mensajes a la sala.
+
+servers:
+  production:
+    host: your-service-name.onrender.com
+    protocol: wss
+    description: Render (produccion)
+  local:
+    host: localhost:4000
+    protocol: ws
+    description: Desarrollo local
+
+defaultContentType: application/json
+
+channels:
+  join_room:
+    address: join_room
+    messages:
+      joinRoomMessage:
+        $ref: '#/components/messages/JoinRoomMessage'
+  leave_room:
+    address: leave_room
+    messages:
+      leaveRoomMessage:
+        $ref: '#/components/messages/LeaveRoomMessage'
+  message:
+    address: message
+    messages:
+      messageCommand:
+        $ref: '#/components/messages/SendMessageCommand'
+      messageBroadcast:
+        $ref: '#/components/messages/MessageBroadcast'
+
+operations:
+  sendJoinRoom:
+    action: send
+    channel:
+      $ref: '#/channels/join_room'
+    summary: Unirse a una sala y recibir historial por ack.
+    messages:
+      - $ref: '#/channels/join_room/messages/joinRoomMessage'
+    x-ack:
+      $ref: '#/components/schemas/JoinRoomAck'
+
+  sendLeaveRoom:
+    action: send
+    channel:
+      $ref: '#/channels/leave_room'
+    summary: Salir de una sala.
+    messages:
+      - $ref: '#/channels/leave_room/messages/leaveRoomMessage'
+
+  sendMessage:
+    action: send
+    channel:
+      $ref: '#/channels/message'
+    summary: Enviar un mensaje a una sala.
+    messages:
+      - $ref: '#/channels/message/messages/messageCommand'
+    x-ack:
+      $ref: '#/components/schemas/SendMessageAck'
+
+  receiveMessage:
+    action: receive
+    channel:
+      $ref: '#/channels/message'
+    summary: Recibir broadcast de mensajes nuevos de la sala.
+    messages:
+      - $ref: '#/channels/message/messages/messageBroadcast'
+
+components:
+  securitySchemes:
+    firebaseBearer:
+      type: httpApiKey
+      in: query
+      name: token
+      description: |
+        Token Firebase enviado por Socket.IO en handshake.auth.token.
+
+  messages:
+    JoinRoomMessage:
+      name: join_room
+      title: Join room command
+      payload:
+        $ref: '#/components/schemas/JoinRoomPayload'
+      examples:
+        - name: Join sala ABC123
+          payload:
+            roomId: ABC123
+
+    LeaveRoomMessage:
+      name: leave_room
+      title: Leave room command
+      payload:
+        $ref: '#/components/schemas/LeaveRoomPayload'
+
+    SendMessageCommand:
+      name: message
+      title: Send chat message command
+      payload:
+        $ref: '#/components/schemas/SendMessagePayload'
+      examples:
+        - name: Mensaje normal
+          payload:
+            roomId: ABC123
+            text: Hola equipo
+
+    MessageBroadcast:
+      name: message
+      title: Message broadcast event
+      payload:
+        $ref: '#/components/schemas/RealtimeMessage'
+
+  schemas:
+    JoinRoomPayload:
+      type: string
+      description: roomId en formato string (se normaliza a uppercase en backend).
+      examples:
+        - ABC123
+
+    LeaveRoomPayload:
+      type: string
+      description: roomId en formato string.
+      examples:
+        - ABC123
+
+    SendMessagePayload:
+      type: object
+      additionalProperties: false
+      required:
+        - roomId
+        - text
+      properties:
+        roomId:
+          type: string
+          minLength: 1
+          description: ID de la sala.
+        text:
+          type: string
+          minLength: 1
+          maxLength: 2000
+          description: Texto del mensaje.
+
+    RealtimeMessage:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - text
+        - userUid
+      properties:
+        id:
+          type: string
+        text:
+          type: string
+        userUid:
+          type: string
+        displayName:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+          nullable: true
+
+    JoinRoomAck:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required:
+            - ok
+            - messages
+          properties:
+            ok:
+              type: boolean
+              const: true
+            messages:
+              type: array
+              items:
+                $ref: '#/components/schemas/RealtimeMessage'
+        - type: object
+          additionalProperties: false
+          required:
+            - ok
+            - error
+          properties:
+            ok:
+              type: boolean
+              const: false
+            error:
+              type: string
+
+    SendMessageAck:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required:
+            - ok
+          properties:
+            ok:
+              type: boolean
+              const: true
+        - type: object
+          additionalProperties: false
+          required:
+            - ok
+            - error
+          properties:
+            ok:
+              type: boolean
+              const: false
+            error:
+              type: string
