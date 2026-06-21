@@ -16,6 +16,24 @@ type Message = {
   createdAt?: string | null;
 };
 
+type PeerMediaState = {
+  audioEnabled: boolean;
+  videoEnabled: boolean;
+  screenSharing: boolean;
+};
+
+type RoomPeer = {
+  id: string;
+  uid: string;
+  name: string;
+  role: "admin" | "participant";
+};
+
+type RoomState = {
+  peers: Map<string, RoomPeer>;
+  mediaByPeerId: Map<string, PeerMediaState>;
+};
+
 const app = express();
 app.use(cors());
 app.use("/docs", express.static(resolve(process.cwd(), "public/docs")));
@@ -35,6 +53,68 @@ app.get("/health", (_req, res) => {
 
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
+const roomStates = new Map<string, RoomState>();
+const socketRoomIndex = new Map<string, string>();
+
+const getDefaultMediaState = (): PeerMediaState => ({
+  audioEnabled: false,
+  videoEnabled: false,
+  screenSharing: false,
+});
+
+const getOrCreateRoomState = (roomId: string): RoomState => {
+  const current = roomStates.get(roomId);
+  if (current) {
+    return current;
+  }
+
+  const next: RoomState = {
+    peers: new Map(),
+    mediaByPeerId: new Map(),
+  };
+  roomStates.set(roomId, next);
+  return next;
+};
+
+const emitRoomParticipants = (roomId: string): void => {
+  const roomState = roomStates.get(roomId);
+  if (!roomState) {
+    io.to(roomId).emit("room_participants", []);
+    return;
+  }
+
+  const participants = Array.from(roomState.peers.values()).map((peer) => ({
+    id: peer.id,
+    name: peer.name,
+    role: peer.role,
+  }));
+
+  io.to(roomId).emit("room_participants", participants);
+};
+
+const leaveTrackedRoom = (socketId: string): void => {
+  const roomId = socketRoomIndex.get(socketId);
+  if (!roomId) {
+    return;
+  }
+
+  socketRoomIndex.delete(socketId);
+  const roomState = roomStates.get(roomId);
+  if (!roomState) {
+    return;
+  }
+
+  roomState.peers.delete(socketId);
+  roomState.mediaByPeerId.delete(socketId);
+  io.to(roomId).emit("peer_left", { peerId: socketId });
+
+  if (roomState.peers.size === 0) {
+    roomStates.delete(roomId);
+    return;
+  }
+
+  emitRoomParticipants(roomId);
+};
 
 io.use(async (socket, next) => {
   try {
@@ -55,6 +135,8 @@ io.on("connection", (socket) => {
 
   socket.on("join_room", async (rawRoomId: string, ack?: (res: any) => void) => {
     try {
+      leaveTrackedRoom(socket.id);
+
       const roomId = String(rawRoomId || "").trim().toUpperCase();
       if (!roomId) throw new Error("roomId required");
 
@@ -65,6 +147,33 @@ io.on("connection", (socket) => {
       }
 
       socket.join(roomId);
+      socketRoomIndex.set(socket.id, roomId);
+
+      const creatorUid = String(roomDoc.data()?.creatorUid || "");
+      const roomState = getOrCreateRoomState(roomId);
+
+      for (const [peerSocketId, existingPeer] of roomState.peers.entries()) {
+        if (existingPeer.uid !== auth.uid || peerSocketId === socket.id) {
+          continue;
+        }
+
+        roomState.peers.delete(peerSocketId);
+        roomState.mediaByPeerId.delete(peerSocketId);
+        socketRoomIndex.delete(peerSocketId);
+        io.to(roomId).emit("peer_left", { peerId: peerSocketId });
+        io.sockets.sockets.get(peerSocketId)?.disconnect(true);
+      }
+
+      const peer: RoomPeer = {
+        id: socket.id,
+        uid: auth.uid,
+        name: auth.name || auth.email || "Participante",
+        role: creatorUid && creatorUid === auth.uid ? "admin" : "participant",
+      };
+      const existingPeers = Array.from(roomState.peers.values());
+      const existingMediaEntries = Array.from(roomState.mediaByPeerId.entries());
+      roomState.peers.set(peer.id, peer);
+      roomState.mediaByPeerId.set(peer.id, getDefaultMediaState());
 
       const snap = await db.collection("rooms").doc(roomId).collection("messages")
         .orderBy("createdAt", "desc").limit(MESSAGES_PAGE).get();
@@ -84,7 +193,26 @@ io.on("connection", (socket) => {
         at: new Date().toISOString(),
       });
 
-      if (ack) ack({ ok: true, messages });
+      socket.to(roomId).emit("peer_joined", {
+        peer,
+        mediaState: getDefaultMediaState(),
+      });
+      emitRoomParticipants(roomId);
+
+      if (ack) {
+        ack({
+          ok: true,
+          messages,
+          selfPeerId: socket.id,
+          peers: existingPeers,
+          mediaStates: existingMediaEntries.map(([peerId, state]) => ({ peerId, ...state })),
+          participants: Array.from(roomState.peers.values()).map((p) => ({
+            id: p.id,
+            name: p.name,
+            role: p.role,
+          })),
+        });
+      }
     } catch (e) {
       if (ack) ack({ ok: false, error: (e as Error).message });
     }
@@ -92,7 +220,77 @@ io.on("connection", (socket) => {
 
   socket.on("leave_room", (rawRoomId: string) => {
     const roomId = String(rawRoomId || "").trim().toUpperCase();
-    if (roomId) socket.leave(roomId);
+    if (roomId) {
+      socket.leave(roomId);
+      leaveTrackedRoom(socket.id);
+    }
+  });
+
+  socket.on("webrtc_offer", (payload: { roomId: string; toPeerId: string; sdp: Record<string, unknown> }) => {
+    const roomId = String(payload?.roomId || "").trim().toUpperCase();
+    const toPeerId = String(payload?.toPeerId || "").trim();
+    if (!roomId || !toPeerId || !payload?.sdp) {
+      return;
+    }
+
+    io.to(toPeerId).emit("webrtc_offer", {
+      roomId,
+      fromPeerId: socket.id,
+      sdp: payload.sdp,
+    });
+  });
+
+  socket.on("webrtc_answer", (payload: { roomId: string; toPeerId: string; sdp: Record<string, unknown> }) => {
+    const roomId = String(payload?.roomId || "").trim().toUpperCase();
+    const toPeerId = String(payload?.toPeerId || "").trim();
+    if (!roomId || !toPeerId || !payload?.sdp) {
+      return;
+    }
+
+    io.to(toPeerId).emit("webrtc_answer", {
+      roomId,
+      fromPeerId: socket.id,
+      sdp: payload.sdp,
+    });
+  });
+
+  socket.on("webrtc_ice_candidate", (payload: { roomId: string; toPeerId: string; candidate: Record<string, unknown> }) => {
+    const roomId = String(payload?.roomId || "").trim().toUpperCase();
+    const toPeerId = String(payload?.toPeerId || "").trim();
+    if (!roomId || !toPeerId || !payload?.candidate) {
+      return;
+    }
+
+    io.to(toPeerId).emit("webrtc_ice_candidate", {
+      roomId,
+      fromPeerId: socket.id,
+      candidate: payload.candidate,
+    });
+  });
+
+  socket.on("media_state", (payload: { roomId: string; audioEnabled: boolean; videoEnabled: boolean; screenSharing: boolean }) => {
+    const roomId = String(payload?.roomId || "").trim().toUpperCase();
+    const trackedRoomId = socketRoomIndex.get(socket.id);
+    if (!roomId || trackedRoomId !== roomId) {
+      return;
+    }
+
+    const roomState = roomStates.get(roomId);
+    if (!roomState) {
+      return;
+    }
+
+    const nextState: PeerMediaState = {
+      audioEnabled: Boolean(payload.audioEnabled),
+      videoEnabled: Boolean(payload.videoEnabled),
+      screenSharing: Boolean(payload.screenSharing),
+    };
+
+    roomState.mediaByPeerId.set(socket.id, nextState);
+    io.to(roomId).emit("media_state_changed", {
+      peerId: socket.id,
+      ...nextState,
+    });
   });
 
   socket.on("message", async (payload: { roomId: string; text: string }, ack?: (res: any) => void) => {
@@ -116,6 +314,10 @@ io.on("connection", (socket) => {
     } catch (e) {
       if (ack) ack({ ok: false, error: (e as Error).message });
     }
+  });
+
+  socket.on("disconnect", () => {
+    leaveTrackedRoom(socket.id);
   });
 });
 
