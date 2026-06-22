@@ -27,6 +27,7 @@ type RoomPeer = {
   uid: string;
   name: string;
   role: "admin" | "participant";
+  avatarUrl: string | null;
 };
 
 type RoomState = {
@@ -76,6 +77,16 @@ const getOrCreateRoomState = (roomId: string): RoomState => {
   return next;
 };
 
+const getUserAvatarUrl = async (uid: string): Promise<string | null> => {
+  const userDoc = await db.collection("users").doc(uid).get();
+  if (!userDoc.exists) {
+    return null;
+  }
+
+  const avatarUrl = userDoc.data()?.avatarUrl;
+  return typeof avatarUrl === "string" && avatarUrl.trim() ? avatarUrl : null;
+};
+
 const emitRoomParticipants = (roomId: string): void => {
   const roomState = roomStates.get(roomId);
   if (!roomState) {
@@ -85,15 +96,36 @@ const emitRoomParticipants = (roomId: string): void => {
 
   const participants = Array.from(roomState.peers.values()).map((peer) => ({
     id: peer.id,
+    uid: peer.uid,
     name: peer.name,
     role: peer.role,
+    avatarUrl: peer.avatarUrl,
   }));
 
   io.to(roomId).emit("room_participants", participants);
 };
 
-const leaveTrackedRoom = (socketId: string): void => {
-  const roomId = socketRoomIndex.get(socketId);
+const resolveTrackedRoomId = (socketId: string, fallbackRoomId?: string): string | null => {
+  const indexedRoomId = socketRoomIndex.get(socketId);
+  if (indexedRoomId) {
+    return indexedRoomId;
+  }
+
+  if (fallbackRoomId) {
+    return fallbackRoomId;
+  }
+
+  for (const [roomId, roomState] of roomStates.entries()) {
+    if (roomState.peers.has(socketId)) {
+      return roomId;
+    }
+  }
+
+  return null;
+};
+
+const leaveTrackedRoom = (socketId: string, fallbackRoomId?: string): void => {
+  const roomId = resolveTrackedRoomId(socketId, fallbackRoomId);
   if (!roomId) {
     return;
   }
@@ -150,6 +182,7 @@ io.on("connection", (socket) => {
       socketRoomIndex.set(socket.id, roomId);
 
       const creatorUid = String(roomDoc.data()?.creatorUid || "");
+      const avatarUrl = await getUserAvatarUrl(auth.uid);
       const roomState = getOrCreateRoomState(roomId);
 
       for (const [peerSocketId, existingPeer] of roomState.peers.entries()) {
@@ -169,6 +202,7 @@ io.on("connection", (socket) => {
         uid: auth.uid,
         name: auth.name || auth.email || "Participante",
         role: creatorUid && creatorUid === auth.uid ? "admin" : "participant",
+        avatarUrl,
       };
       const existingPeers = Array.from(roomState.peers.values());
       const existingMediaEntries = Array.from(roomState.mediaByPeerId.entries());
@@ -208,8 +242,10 @@ io.on("connection", (socket) => {
           mediaStates: existingMediaEntries.map(([peerId, state]) => ({ peerId, ...state })),
           participants: Array.from(roomState.peers.values()).map((p) => ({
             id: p.id,
+            uid: p.uid,
             name: p.name,
             role: p.role,
+            avatarUrl: p.avatarUrl,
           })),
         });
       }
@@ -222,7 +258,7 @@ io.on("connection", (socket) => {
     const roomId = String(rawRoomId || "").trim().toUpperCase();
     if (roomId) {
       socket.leave(roomId);
-      leaveTrackedRoom(socket.id);
+      leaveTrackedRoom(socket.id, roomId);
     }
   });
 
@@ -314,6 +350,11 @@ io.on("connection", (socket) => {
     } catch (e) {
       if (ack) ack({ ok: false, error: (e as Error).message });
     }
+  });
+
+  socket.on("disconnecting", () => {
+    const joinedRoomId = Array.from(socket.rooms).find((candidateRoomId) => candidateRoomId !== socket.id);
+    leaveTrackedRoom(socket.id, joinedRoomId);
   });
 
   socket.on("disconnect", () => {
