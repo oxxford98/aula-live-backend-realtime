@@ -40,6 +40,48 @@ channels:
         $ref: '#/components/messages/SendMessageCommand'
       messageBroadcast:
         $ref: '#/components/messages/MessageBroadcast'
+  webrtc_offer:
+    address: webrtc_offer
+    messages:
+      offerMessage:
+        $ref: '#/components/messages/WebRTCOfferMessage'
+
+  webrtc_answer:
+    address: webrtc_answer
+    messages:
+      answerMessage:
+        $ref: '#/components/messages/WebRTCAnswerMessage'
+
+  webrtc_ice_candidate:
+    address: webrtc_ice_candidate
+    messages:
+      iceCandidateMessage:
+        $ref: '#/components/messages/WebRTCIceCandidateMessage'
+
+  peer_joined:
+    address: peer_joined
+    messages:
+      peerJoinedMessage:
+        $ref: '#/components/messages/PeerJoinedMessage'
+
+  peer_left:
+    address: peer_left
+    messages:
+      peerLeftMessage:
+        $ref: '#/components/messages/PeerLeftMessage'
+
+  media_state:
+    address: media_state
+    messages:
+      mediaStateMessage:
+        $ref: '#/components/messages/MediaStateMessage'
+
+  media_state_changed:
+    address: media_state_changed
+    messages:
+      mediaStateChangedMessage:
+        $ref: '#/components/messages/MediaStateChangedMessage'
+  
 
 operations:
   sendJoinRoom:
@@ -77,6 +119,86 @@ operations:
     summary: Recibir broadcast de mensajes nuevos de la sala.
     messages:
       - $ref: '#/channels/message/messages/messageBroadcast'
+
+  sendWebRTCOffer:
+    action: send
+    channel:
+      $ref: '#/channels/webrtc_offer'
+    summary: Enviar una oferta SDP a otro participante.
+    messages:
+      - $ref: '#/channels/webrtc_offer/messages/offerMessage'
+
+  receiveWebRTCOffer:
+    action: receive
+    channel:
+      $ref: '#/channels/webrtc_offer'
+    summary: Recibir una oferta SDP.
+    messages:
+      - $ref: '#/channels/webrtc_offer/messages/offerMessage'
+
+  sendWebRTCAnswer:
+    action: send
+    channel:
+      $ref: '#/channels/webrtc_answer'
+    summary: Responder una oferta SDP.
+    messages:
+      - $ref: '#/channels/webrtc_answer/messages/answerMessage'
+
+  receiveWebRTCAnswer:
+    action: receive
+    channel:
+      $ref: '#/channels/webrtc_answer'
+    summary: Recibir una respuesta SDP.
+    messages:
+      - $ref: '#/channels/webrtc_answer/messages/answerMessage'
+
+  sendIceCandidate:
+    action: send
+    channel:
+      $ref: '#/channels/webrtc_ice_candidate'
+    summary: Enviar un ICE Candidate.
+    messages:
+      - $ref: '#/channels/webrtc_ice_candidate/messages/iceCandidateMessage'
+
+  receiveIceCandidate:
+    action: receive
+    channel:
+      $ref: '#/channels/webrtc_ice_candidate'
+    summary: Recibir un ICE Candidate.
+    messages:
+      - $ref: '#/channels/webrtc_ice_candidate/messages/iceCandidateMessage'
+
+  receivePeerJoined:
+    action: receive
+    channel:
+      $ref: '#/channels/peer_joined'
+    summary: Notificación cuando un participante entra a la sala.
+    messages:
+      - $ref: '#/channels/peer_joined/messages/peerJoinedMessage'
+
+  receivePeerLeft:
+    action: receive
+    channel:
+      $ref: '#/channels/peer_left'
+    summary: Notificación cuando un participante abandona la sala.
+    messages:
+      - $ref: '#/channels/peer_left/messages/peerLeftMessage'
+
+  sendMediaState:
+    action: send
+    channel:
+      $ref: '#/channels/media_state'
+    summary: Actualizar estado del micrófono, cámara y pantalla.
+    messages:
+      - $ref: '#/channels/media_state/messages/mediaStateMessage'
+
+  receiveMediaState:
+    action: receive
+    channel:
+      $ref: '#/channels/media_state_changed'
+    summary: Recibir cambios de estado multimedia de otro participante.
+    messages:
+      - $ref: '#/channels/media_state_changed/messages/mediaStateChangedMessage'
 
 components:
   securitySchemes:
@@ -120,6 +242,41 @@ components:
       title: Message broadcast event
       payload:
         $ref: '#/components/schemas/RealtimeMessage'
+
+    WebRTCOfferMessage:
+      name: webrtc_offer
+      payload:
+        $ref: '#/components/schemas/WebRTCOfferPayload'
+
+    WebRTCAnswerMessage:
+      name: webrtc_answer
+      payload:
+        $ref: '#/components/schemas/WebRTCAnswerPayload'
+
+    WebRTCIceCandidateMessage:
+      name: webrtc_ice_candidate
+      payload:
+        $ref: '#/components/schemas/WebRTCIceCandidatePayload'
+
+    PeerJoinedMessage:
+      name: peer_joined
+      payload:
+        $ref: '#/components/schemas/PeerJoinedPayload'
+
+    PeerLeftMessage:
+      name: peer_left
+      payload:
+        $ref: '#/components/schemas/PeerLeftPayload'
+
+    MediaStateMessage:
+      name: media_state
+      payload:
+        $ref: '#/components/schemas/MediaStatePayload'
+
+    MediaStateChangedMessage:
+      name: media_state_changed
+      payload:
+        $ref: '#/components/schemas/MediaStateChangedPayload'
 
   schemas:
     JoinRoomPayload:
@@ -221,3 +378,113 @@ components:
               const: false
             error:
               type: string
+              
+    WebRTCOfferPayload:
+      type: object
+      required:
+        - roomId
+        - toPeerId
+        - sdp
+      properties:
+        roomId:
+          type: string
+        toPeerId:
+          type: string
+        sdp:
+          type: object
+
+    WebRTCAnswerPayload:
+      type: object
+      required:
+        - roomId
+        - toPeerId
+        - sdp
+      properties:
+        roomId:
+          type: string
+        toPeerId:
+          type: string
+        sdp:
+          type: object
+
+    WebRTCIceCandidatePayload:
+      type: object
+      required:
+        - roomId
+        - toPeerId
+        - candidate
+      properties:
+        roomId:
+          type: string
+        toPeerId:
+          type: string
+        candidate:
+          type: object
+
+    Participant:
+      type: object
+      properties:
+        id:
+          type: string
+        uid:
+          type: string
+        name:
+          type: string
+        role:
+          type: string
+        avatarUrl:
+          type: string
+          nullable: true
+
+    PeerMediaState:
+      type: object
+      properties:
+        audioEnabled:
+          type: boolean
+        videoEnabled:
+          type: boolean
+        screenSharing:
+          type: boolean
+
+    PeerJoinedPayload:
+      type: object
+      properties:
+        peer:
+          $ref: '#/components/schemas/Participant'
+        mediaState:
+          $ref: '#/components/schemas/PeerMediaState'
+
+    PeerLeftPayload:
+      type: object
+      properties:
+        peerId:
+          type: string
+
+    MediaStatePayload:
+      type: object
+      required:
+        - roomId
+        - audioEnabled
+        - videoEnabled
+        - screenSharing
+      properties:
+        roomId:
+          type: string
+        audioEnabled:
+          type: boolean
+        videoEnabled:
+          type: boolean
+        screenSharing:
+          type: boolean
+
+    MediaStateChangedPayload:
+      type: object
+      properties:
+        peerId:
+          type: string
+        audioEnabled:
+          type: boolean
+        videoEnabled:
+          type: boolean
+        screenSharing:
+          type: boolean
